@@ -37,6 +37,7 @@ ui/                 界面:React + TSX,iimos build 编译到 ui/dist(产物进 g
   src/store.ts      GET /api/projects/:id 拿全量(树 + 对话 + 运行态),SSE 接 delta / item / state / node / … 事件
   src/lib/chat.ts   存库的条目 → 对话里的行(用户气泡、回复、工具调用合成一行、压缩标记、本地提示)
   src/lib/markdown.ts  回复的 Markdown 渲染(不渲染原始 HTML / 图片)
+  src/lib/plants.ts  Flora 植物图鉴(10 株):首页标题上随机摇曳一株,生成中的卡片按节点 id 抽一株
   src/components/   Home、ChatPanel(MessageStream + ToolGroup + 输入框)、PaneDivider、Canvas(树)、NodeCard、Bubble(发散气泡)、Preview、Minimap、Setup
   src/lib/          layout.ts 横向树布局(节点尺寸要和 style.css 一致)、viewport.ts 平移缩放
   vendor/           iimos add 装的第三方库:marked

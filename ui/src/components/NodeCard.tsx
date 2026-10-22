@@ -5,6 +5,7 @@ import type { Id, TreeNode } from '../types';
 import { isArtifact } from '../types';
 import type { Pos } from '../lib/layout';
 import { BranchIcon, Mark } from './Mark';
+import { plantOf } from '../lib/plants';
 
 type Props = {
     node: TreeNode;
@@ -55,7 +56,10 @@ export const NodeCard = memo(function NodeCard({ node, pos, selected, collapsed,
                 ) : hasArtifact ? (
                     <div className="node-skeleton" aria-hidden="true"><i /><i /><i /><i /></div>
                 ) : working ? (
-                    <div className="node-center"><span className="sprout" /><div className="node-label">生成中…</div></div>
+                    <div className="node-center">
+                        <span className="node-plant" title={plantOf(node.id).name} dangerouslySetInnerHTML={{ __html: plantOf(node.id).svg }} />
+                        <div className="node-label">生成中…</div>
+                    </div>
                 ) : (
                     <div className="node-center"><div className="node-error">{node.content || '生成失败'}</div></div>
                 )}

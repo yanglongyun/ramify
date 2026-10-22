@@ -1,9 +1,10 @@
 // 首屏:一个输入框 + 方案数量;下面是之前长过的画布。
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import type { Project } from '../types';
 import { CountPicker } from './CountPicker';
 import { Mark } from './Mark';
+import { randomPlant } from '../lib/plants';
 
 const MAX = 2000;
 const STARTERS: Array<[string, string]> = [
@@ -28,6 +29,7 @@ export function Home({ projects, ready, onCreate, onOpen, onDelete, onSetup }: {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const area = useRef<HTMLTextAreaElement>(null);
+    const plant = useMemo(() => randomPlant(), []);
     useEffect(() => { area.current?.focus(); }, []);
 
     const submit = async () => {
@@ -45,6 +47,7 @@ export function Home({ projects, ready, onCreate, onOpen, onDelete, onSetup }: {
             <button className="home-model" onClick={onSetup}><span className={ready ? 'on' : ''} />{ready ? '模型' : '连接模型'}</button>
             <div className="home-board">
                 <header className="home-head">
+                    <div className="home-plant" title={plant.name} aria-hidden="true" dangerouslySetInnerHTML={{ __html: plant.svg }} />
                     <h1>让一个想法,长成一片创意</h1>
                     <p>写一句话,定好出几版。每一版都是树上独立的一支 —— 挑中最好的那支,继续往下长。</p>
                     <form className="ticket" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
