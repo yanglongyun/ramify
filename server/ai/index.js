@@ -168,9 +168,10 @@ export async function callModel(instructions, messages, model, config, tools = [
             return result;
         } catch (error) {
             signal?.throwIfAborted();
-            // 只有还没交付内容的网络失败、断流和 429/5xx 可以重试;协议错误、模型拒绝、回调出错直接终止
+            // 只有还没交付内容的网络失败、断流和 429/5xx 可以重试;协议错误、模型拒绝、回调出错直接终止。
+            // ramify 不向用户流式展示正文,调用方传 retryAfterDelivery 时已交付增量的断流也重试(一个批次常常只有一次很长的响应)
             const retryable = phase === 'fetch' || retryableHttp || error.code === 'stream_interrupted';
-            if (delivered || !retryable) throw error;
+            if ((delivered && !config.retryAfterDelivery) || !retryable) throw error;
             last = error;
             if (attempt < 2) {
                 const delayMs = (attempt + 1) * 2000;

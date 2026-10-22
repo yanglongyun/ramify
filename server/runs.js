@@ -110,6 +110,8 @@ export class Runs {
             config: {
                 url: config.responsesUrl,
                 key: config.apiKey,
+                // 正文增量不展示给用户,断流后整段重来没有副作用
+                retryAfterDelivery: true,
                 workdir: this.workspace,
                 bin: this.bin,
                 timeout: 120,
