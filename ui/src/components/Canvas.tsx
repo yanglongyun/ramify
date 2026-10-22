@@ -1,6 +1,6 @@
 // 画布:整棵树、节点卡片、发散气泡、右侧预览。
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Id, Run, Tree, TreeNode } from '../types';
+import type { Id, TreeNode } from '../types';
 import { isArtifact } from '../types';
 import { edgePath, layoutTree } from '../lib/layout';
 import { useViewport } from '../lib/viewport';
@@ -8,7 +8,6 @@ import { NodeCard } from './NodeCard';
 import { Bubble } from './Bubble';
 import { Preview } from './Preview';
 import { Minimap } from './Minimap';
-import { Activity } from './Activity';
 import { Mark } from './Mark';
 
 const RENDER_OVERSCAN_PX = 700;
@@ -20,16 +19,14 @@ function intersects(p: { x: number; y: number; w: number; h: number }, rect: { x
     return p.x + p.w / 2 >= rect.x1 && p.x - p.w / 2 <= rect.x2 && p.y + p.h / 2 >= rect.y1 && p.y - p.h / 2 <= rect.y2;
 }
 
-export function Canvas({ tree, runs, ready, onBack, onBranch, onStop, onSetup, onToast }: {
-    tree: Tree; runs: Run[]; ready: boolean;
-    onBack: () => void;
+export function Canvas({ nodes, title, prompt, selectedId, setSelectedId, ready, onBranch, onSetup, onToast }: {
+    nodes: TreeNode[]; title: string; prompt: string;
+    selectedId: Id | null; setSelectedId: (id: Id | null) => void;
+    ready: boolean;
     onBranch: (nodeId: Id, prompt: string, count: number) => Promise<void>;
-    onStop: (runId: string) => void;
     onSetup: () => void;
     onToast: (text: string) => void;
 }) {
-    const nodes = tree.nodes;
-    const [selectedId, setSelectedId] = useState<Id | null>(null);
     const [previewId, setPreviewId] = useState<Id | null>(null);
     const [bubbleOpen, setBubbleOpen] = useState(false);
     const [collapsed, setCollapsed] = useState<Set<Id>>(() => new Set());
@@ -135,11 +132,10 @@ export function Canvas({ tree, runs, ready, onBack, onBranch, onStop, onSetup, o
     const previewNode = previewId ? byId.get(previewId) : undefined;
 
     return (
-        <div className="canvas">
+        <div className="canvas-pane">
             <div className="bar">
-                <button className="bar-back" title="回首页" onClick={onBack}>←</button>
-                <span className="bar-sep" /><Mark size={15} />
-                <div className="bar-name" title={tree.project.prompt}>{tree.project.title}</div>
+                <Mark size={15} />
+                <div className="bar-name" title={prompt}>{title}</div>
                 <span className="bar-stat"><b>{done}</b> 版</span>
                 {generating > 0 && <span className="bar-stat is-live"><b>{generating}</b> 生成中</span>}
                 <button className="bar-model" title="模型配置" onClick={onSetup}><span className={ready ? 'on' : ''} /></button>
@@ -173,8 +169,7 @@ export function Canvas({ tree, runs, ready, onBack, onBranch, onStop, onSetup, o
                     </div>
                     <Minimap nodes={visibleNodes} positions={positions} view={viewport.view} canvasSize={viewport.canvasSize}
                         onNavigate={(x, y) => viewport.setView((current) => ({ ...current, x: viewport.canvasSize.w / 2 - x * current.k, y: viewport.canvasSize.h / 2 - y * current.k }))} />
-                    <Activity runs={runs} onStop={onStop} />
-                    <div className="canvas-hint">拖动平移 · 滚轮平移 · ⌘/Ctrl + 滚轮缩放 · 点节点预览 · 点枝叶从它继续</div>
+                    <div className="canvas-hint">拖动平移 · 滚轮平移 · ⌘/Ctrl + 滚轮缩放 · 点节点预览,再在左边说话 · 点枝叶直接分叉</div>
                 </div>
                 {previewNode && <Preview node={previewNode} onClose={() => setPreviewId(null)} onToast={onToast} />}
             </div>

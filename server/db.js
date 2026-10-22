@@ -39,18 +39,29 @@ CREATE TABLE IF NOT EXISTS nodes (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS nodes_project ON nodes(project_id, parent_id, position);
-CREATE TABLE IF NOT EXISTS runs (
-  id          TEXT PRIMARY KEY,
-  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  parent_id   TEXT NOT NULL,
-  prompt      TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'running',
-  error       TEXT,
-  log         TEXT NOT NULL DEFAULT '[]',
-  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  finished_at TEXT
+-- 每个项目一条对话:messages 每行一个模型 item(Responses 协议的 input item);usage 附在每次模型响应的最后一项
+CREATE TABLE IF NOT EXISTS messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  item       TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE INDEX IF NOT EXISTS runs_project ON runs(project_id, created_at);
+CREATE INDEX IF NOT EXISTS messages_project ON messages(project_id, id);
+-- 上下文摘要,覆盖到 message_id(含);之后的消息原样发给模型
+CREATE TABLE IF NOT EXISTS compactions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  message_id INTEGER NOT NULL,
+  summary    TEXT NOT NULL,
+  item       TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS compactions_project ON compactions(project_id, id);
+-- 对话的运行态:上一次模型响应报的 total_tokens(压缩依据)
+CREATE TABLE IF NOT EXISTS chats (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  tokens     INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 export const newId = () => randomBytes(6).toString('hex');
@@ -60,9 +71,8 @@ export function openDatabase(file) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const db = new DatabaseSync(file);
     db.exec(SCHEMA);
-    // 上次进程没走完就退了:还在「生成中」的记录和空节点不会再有人填,标成失败
-    const stale = db.prepare(`SELECT id FROM runs WHERE status = 'running'`).all();
-    for (const run of stale) finishRun(db, run.id, 'failed', '应用在生成过程中退出了');
+    // 上次进程没走完就退了:还空着的作品节点不会再有人填,标成失败
+    db.prepare(`UPDATE nodes SET type = 'error', content = '应用在生成过程中退出了', updated_at = ? WHERE type IN ('html','markdown','svg') AND content IS NULL`).run(now());
     return db;
 }
 
@@ -79,16 +89,16 @@ export function listProjects(db) {
 
 export const getProject = (db, id) => db.prepare('SELECT * FROM projects WHERE id = ?').get(id) || null;
 
-/** 新建项目:根节点的标题就是需求,下面挂 count 个空的作品节点等 agent 填。返回 { project, root, placeholders }。 */
-export function createProject(db, { prompt, count, runId }) {
+/** 新建项目:根节点的标题就是需求。方案节点由 agent 在对话里用 add_nodes 建。返回 { project, root }。 */
+export function createProject(db, { prompt }) {
     const text = String(prompt || '').trim();
     if (!text) throw Object.assign(new Error('需求不能为空'), { status: 400 });
     const id = newId();
     const title = text.split(/\r?\n/)[0].slice(0, 60);
     db.prepare('INSERT INTO projects (id, title, prompt) VALUES (?, ?, ?)').run(id, title, text);
+    db.prepare('INSERT INTO chats (project_id, tokens) VALUES (?, 0)').run(id);
     const root = insertNode(db, { projectId: id, parentId: null, position: 0, type: 'text', title: text });
-    const placeholders = createPlaceholders(db, { projectId: id, parentId: root.id, count, runId });
-    return { project: getProject(db, id), root, placeholders };
+    return { project: getProject(db, id), root };
 }
 
 export function deleteProject(db, id) {
@@ -123,18 +133,18 @@ export function createPlaceholders(db, { projectId, parentId, count, runId }) {
 }
 
 /**
- * 从某个节点发散:先在它下面插一个「轮」节点(标题 = 修改要求),再在轮下挂 count 个空作品节点。
- * 旧节点一个都不动。返回 { round, placeholders }。
+ * agent 在某个节点下新建一批占位作品节点。给了 round(修改要求)就先插一个「轮」节点(标题 = round),占位挂在轮下;
+ * 没给就直接挂在 parentId 下(根节点的第一批方案)。旧节点一个都不动。返回 { parent, round, placeholders }。
  */
-export function branch(db, { parentId, prompt, count, runId }) {
+export function addNodes(db, { parentId, count, round = '', runId = null }) {
     const parent = getNode(db, parentId);
-    if (!parent) throw Object.assign(new Error('没有这个节点'), { status: 404 });
-    const text = String(prompt || '').trim();
-    if (!text) throw Object.assign(new Error('修改要求不能为空'), { status: 400 });
-    const round = insertNode(db, { projectId: parent.project_id, parentId: parent.id, position: nextPosition(db, parent.id), type: 'text', title: text });
-    const placeholders = createPlaceholders(db, { projectId: parent.project_id, parentId: round.id, count, runId });
+    if (!parent) throw Object.assign(new Error(`没有这个节点:${parentId}`), { status: 404 });
+    const text = String(round || '').trim();
+    let under = parent;
+    if (text) under = insertNode(db, { projectId: parent.project_id, parentId: parent.id, position: nextPosition(db, parent.id), type: 'text', title: text.slice(0, 200) });
+    const placeholders = createPlaceholders(db, { projectId: parent.project_id, parentId: under.id, count, runId });
     touchProject(db, parent.project_id);
-    return { parent, round, placeholders };
+    return { parent, round: text ? under : null, placeholders };
 }
 
 /** agent 写入 / 更新一个节点:type 决定内容是什么;error 的 content 是失败原因。 */
@@ -165,30 +175,51 @@ export function getTree(db, projectId) {
     return { project, nodes };
 }
 
-// ── 生成批次 ───────────────────────────────────────────
+// ── 对话 ──────────────────────────────────────────────
 
-export function createRun(db, { id = newId(), projectId, parentId, prompt }) {
-    db.prepare('INSERT INTO runs (id, project_id, parent_id, prompt) VALUES (?, ?, ?, ?)').run(id, projectId, parentId, prompt);
-    return getRun(db, id);
+const parseMessage = (row) => ({ id: row.id, created_at: row.created_at, ...JSON.parse(row.item) });
+
+/** 存一条完整 item,返回带 id / created_at 的副本。 */
+export function saveMessage(db, projectId, item) {
+    const row = db.prepare('INSERT INTO messages (project_id, item) VALUES (?, ?)').run(projectId, JSON.stringify(item));
+    touchProject(db, projectId);
+    return parseMessage(db.prepare('SELECT * FROM messages WHERE id = ?').get(row.lastInsertRowid));
 }
 
-const parseRun = (row) => (row ? { ...row, log: JSON.parse(row.log || '[]') } : null);
-export const getRun = (db, id) => parseRun(db.prepare('SELECT * FROM runs WHERE id = ?').get(id));
-
-export function listRuns(db, projectId) {
-    const rows = projectId
-        ? db.prepare('SELECT * FROM runs WHERE project_id = ? ORDER BY created_at').all(projectId)
-        : db.prepare('SELECT * FROM runs ORDER BY created_at DESC LIMIT 50').all();
-    return rows.map(parseRun);
+/** 最近的一页消息(按 id 升序返回);before 给了就取它之前的。返回 { messages, has_more }。 */
+export function listMessages(db, projectId, { before = null, limit = 200 } = {}) {
+    const rows = before
+        ? db.prepare('SELECT * FROM messages WHERE project_id = ? AND id < ? ORDER BY id DESC LIMIT ?').all(projectId, before, limit + 1)
+        : db.prepare('SELECT * FROM messages WHERE project_id = ? ORDER BY id DESC LIMIT ?').all(projectId, limit + 1);
+    const has_more = rows.length > limit;
+    return { messages: rows.slice(0, limit).reverse().map(parseMessage), has_more };
 }
 
-/** 结束一个批次:状态落库,这一批里还空着的作品节点标成失败。返回被标失败的节点 id。 */
-export function finishRun(db, id, status, error = null, log = []) {
-    db.prepare('UPDATE runs SET status = ?, error = ?, log = ?, finished_at = ? WHERE id = ?').run(status, error, JSON.stringify(log), now(), id);
-    const reason = status === 'stopped' ? '用户停下了,这一个没生成完' : (error || '生成没有完成');
-    const empty = db.prepare(`SELECT id FROM nodes WHERE run_id = ? AND type IN ('html','markdown','svg') AND content IS NULL`).all(id);
-    for (const node of empty) {
-        db.prepare(`UPDATE nodes SET type = 'error', content = ?, updated_at = ? WHERE id = ?`).run(reason, now(), node.id);
-    }
+export function listCompactions(db, projectId) {
+    return db.prepare('SELECT id, message_id, summary, created_at FROM compactions WHERE project_id = ? ORDER BY id').all(projectId);
+}
+
+/** 发给模型的上下文:最近一次摘要 + 它之后的全部消息。返回 { items(带 id), head } —— head 是摘要消息(可能没有)。 */
+export function liveMessages(db, projectId) {
+    const last = db.prepare('SELECT message_id, item FROM compactions WHERE project_id = ? ORDER BY id DESC LIMIT 1').get(projectId);
+    const rows = last
+        ? db.prepare('SELECT * FROM messages WHERE project_id = ? AND id > ? ORDER BY id').all(projectId, last.message_id)
+        : db.prepare('SELECT * FROM messages WHERE project_id = ? ORDER BY id').all(projectId);
+    return { head: last ? JSON.parse(last.item) : null, items: rows.map(parseMessage) };
+}
+
+export function saveCompaction(db, projectId, { messageId, summary, item }) {
+    db.prepare('INSERT INTO compactions (project_id, message_id, summary, item) VALUES (?, ?, ?, ?)').run(projectId, messageId, summary, JSON.stringify(item));
+}
+
+export const getTokens = (db, projectId) => db.prepare('SELECT tokens FROM chats WHERE project_id = ?').get(projectId)?.tokens || 0;
+export function setTokens(db, projectId, tokens) {
+    db.prepare('INSERT INTO chats (project_id, tokens) VALUES (?, ?) ON CONFLICT(project_id) DO UPDATE SET tokens = excluded.tokens').run(projectId, tokens);
+}
+
+/** 一轮结束:这一轮建的、还空着的占位节点标成失败。返回被标的节点 id。 */
+export function failEmptyPlaceholders(db, runId, reason) {
+    const empty = db.prepare(`SELECT id FROM nodes WHERE run_id = ? AND type IN ('html','markdown','svg') AND content IS NULL`).all(runId);
+    for (const node of empty) db.prepare(`UPDATE nodes SET type = 'error', content = ?, updated_at = ? WHERE id = ?`).run(reason, now(), node.id);
     return empty.map((node) => node.id);
 }

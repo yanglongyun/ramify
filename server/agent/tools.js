@@ -1,6 +1,22 @@
-// 工具定义。三个:shell(出厂自带)、write_node(写入 / 更新一个节点)、read_tree(读整棵树)。
+// 工具定义。四个:add_nodes(在节点下建一批占位)、write_node(写入 / 更新一个节点)、read_tree(读整棵树)、shell(出厂自带)。
 // 加工具:这里加定义,functions/ 加实现,runner.js 加分发。
 const tools = [
+    {
+        type: 'function',
+        name: 'add_nodes',
+        description: '在画布的某个节点下新建一批空的作品节点(占位),返回它们的 id,之后逐个用 write_node 填。'
+            + '给了 round(修改要求的一句话)就先在该节点下插一个标题节点,占位挂在它下面 —— 从已有方案分叉时这样做;'
+            + '根节点的第一批方案不用 round。',
+        parameters: {
+            type: 'object',
+            properties: {
+                parent_id: { type: 'string', description: '在哪个节点下面长' },
+                count: { type: 'integer', description: '几个(1–8)' },
+                round: { type: 'string', description: '这一轮的修改要求,作为标题节点;根下第一批不填' },
+            },
+            required: ['parent_id', 'count'],
+        },
+    },
     {
         type: 'function',
         name: 'write_node',

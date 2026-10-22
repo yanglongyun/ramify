@@ -4,27 +4,27 @@
 // 令牌由启动方生成,窗口打开时放在地址的 ?token= 里;界面每个请求带 x-iimos-token 头(iframe 用 ?token=)。
 //
 // 接口:
-//   GET    /api/state                 模型配没配、项目列表、正在跑的批次
+//   GET    /api/state                 模型配没配、项目列表
 //   POST   /api/config                保存模型配置(responsesUrl / apiKey / model / contextWindow)
-//   POST   /api/projects              { prompt, count } 新建画布并生成 N 个方案
+//   POST   /api/projects              { prompt, count } 新建画布,这句话成为对话的第一条,agent 生成 count 个方案
 //   DELETE /api/projects/:id
-//   GET    /api/projects/:id/tree     整棵树
-//   GET    /api/projects/:id/runs     这个项目的批次(含活动日志)
-//   POST   /api/nodes/:id/branch      { prompt, count } 从这个节点分叉
+//   GET    /api/projects/:id          整棵树 + 最近一页对话 + 压缩标记 + 运行态
+//   GET    /api/projects/:id/messages?before=<id>   更早的消息
+//   POST   /api/projects/:id/messages { text, node_id?, count? } 说一句话;选中节点作为上下文;count 表示要出几版
+//   POST   /api/projects/:id/stop     停下这一轮
 //   GET    /api/nodes/:id/html        渲染成完整网页(给 iframe)
 //   GET    /api/nodes/:id/source      { node } 带源码
-//   POST   /api/runs/:id/stop         停下一个批次
-//   GET    /api/events                事件流(SSE):node / run / log / config
+//   GET    /api/events                事件流(SSE):delta / item / state / usage / retry / compacting / compacted / error / node / config / project
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { readConfig, writeConfig, publicConfig } from './config.js';
+import { readConfig, writeConfig, publicConfig, modelReady } from './config.js';
 import * as store from './db.js';
 import { renderNode } from './render.js';
-import { Runs } from './runs.js';
+import { Chats } from './chat.js';
 
 const UI_DIR = path.resolve(import.meta.dirname, '..', 'ui');
 const TYPES = {
@@ -75,7 +75,7 @@ function workspaceInfo(workspace) {
 }
 
 /**
- * 起服务。返回 { url(带令牌,给窗口用), port, token, db, runs, close() }。
+ * 起服务。返回 { url(带令牌,给窗口用), port, token, db, chats, close() }。
  * workspace:形态自己的目录;data:用户数据目录($IIMOS_DATA),数据库在 data/ramify/ramify.db。
  */
 export async function startServer({ workspace, data, port = 0, token = crypto.randomBytes(24).toString('hex'), bin = process.env.IIMOS_BIN }) {
@@ -86,7 +86,7 @@ export async function startServer({ workspace, data, port = 0, token = crypto.ra
         const line = `data: ${JSON.stringify(event)}\n\n`;
         for (const res of subscribers) res.write(line);
     };
-    const runs = new Runs({ db, workspace, data, bin, emit: broadcast });
+    const chats = new Chats({ db, workspace, data, bin, emit: broadcast });
 
     const server = http.createServer(async (req, res) => {
         const url = new URL(req.url, 'http://127.0.0.1');
@@ -104,8 +104,7 @@ export async function startServer({ workspace, data, port = 0, token = crypto.ra
                 return sendJson(res, 200, {
                     config: publicConfig(readConfig(data)),
                     workspace: workspaceInfo(workspace),
-                    projects: store.listProjects(db),
-                    runs: runs.snapshot().filter((run) => run.status === 'running'),
+                    projects: store.listProjects(db).map((project) => ({ ...project, running: chats.running(project.id) })),
                 });
             }
             if (route === 'POST /api/config') {
@@ -115,26 +114,44 @@ export async function startServer({ workspace, data, port = 0, token = crypto.ra
             }
             if (route === 'POST /api/projects') {
                 const { prompt, count } = await readBody(req);
-                const result = runs.generate({ prompt, count });
-                return sendJson(res, 201, { project: result.project, root: result.root, nodes: result.placeholders, run: result.run });
+                if (!modelReady(readConfig(data))) return sendJson(res, 400, { error: '还没配置模型' });
+                const { project, root } = store.createProject(db, { prompt });
+                try {
+                    chats.send(project.id, { text: project.prompt, count: count || 3 });
+                } catch (error) {
+                    store.deleteProject(db, project.id);
+                    throw error;
+                }
+                broadcast({ type: 'project', id: project.id });
+                return sendJson(res, 201, { project, root });
             }
             if ((match = route.match(/^DELETE \/api\/projects\/([\w-]+)$/))) {
-                for (const run of runs.snapshot(match[1])) runs.stop(run.id);
+                chats.stop(match[1]);
                 if (!store.deleteProject(db, match[1])) return sendJson(res, 404, { error: '没有这个项目' });
                 broadcast({ type: 'project', id: match[1], deleted: true });
                 return sendJson(res, 200, { ok: true });
             }
-            if ((match = route.match(/^GET \/api\/projects\/([\w-]+)\/tree$/))) {
+            if ((match = route.match(/^GET \/api\/projects\/([\w-]+)$/))) {
                 const tree = store.getTree(db, match[1]);
-                return tree ? sendJson(res, 200, tree) : sendJson(res, 404, { error: '没有这个项目' });
+                if (!tree) return sendJson(res, 404, { error: '没有这个项目' });
+                const page = store.listMessages(db, match[1]);
+                return sendJson(res, 200, {
+                    ...tree, messages: page.messages, has_more: page.has_more, compactions: store.listCompactions(db, match[1]),
+                    running: chats.running(match[1]), partial: chats.partial(match[1]), tokens: store.getTokens(db, match[1]),
+                });
             }
-            if ((match = route.match(/^GET \/api\/projects\/([\w-]+)\/runs$/))) {
-                return sendJson(res, 200, { runs: runs.snapshot(match[1]) });
+            if ((match = route.match(/^GET \/api\/projects\/([\w-]+)\/messages$/))) {
+                if (!store.getProject(db, match[1])) return sendJson(res, 404, { error: '没有这个项目' });
+                const before = Number(url.searchParams.get('before')) || null;
+                return sendJson(res, 200, store.listMessages(db, match[1], { before }));
             }
-            if ((match = route.match(/^POST \/api\/nodes\/([\w-]+)\/branch$/))) {
-                const { prompt, count } = await readBody(req);
-                const result = runs.branch({ parentId: match[1], prompt, count });
-                return sendJson(res, 201, { round: result.round, nodes: result.placeholders, run: result.run });
+            if ((match = route.match(/^POST \/api\/projects\/([\w-]+)\/messages$/))) {
+                const { text, node_id, count } = await readBody(req);
+                const item = chats.send(match[1], { text, nodeId: node_id || null, count: Number(count) || 0 });
+                return sendJson(res, 201, { item });
+            }
+            if ((match = route.match(/^POST \/api\/projects\/([\w-]+)\/stop$/))) {
+                return sendJson(res, 200, { stopped: chats.stop(match[1]) });
             }
             if ((match = route.match(/^GET \/api\/nodes\/([\w-]+)\/html$/))) {
                 const node = store.getNode(db, match[1]);
@@ -145,9 +162,6 @@ export async function startServer({ workspace, data, port = 0, token = crypto.ra
             if ((match = route.match(/^GET \/api\/nodes\/([\w-]+)\/source$/))) {
                 const node = store.getNode(db, match[1]);
                 return node ? sendJson(res, 200, { node }) : sendJson(res, 404, { error: '没有这个节点' });
-            }
-            if ((match = route.match(/^POST \/api\/runs\/([\w-]+)\/stop$/))) {
-                return sendJson(res, 200, { stopped: runs.stop(match[1]) });
             }
             if (route === 'GET /api/events') {
                 res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
@@ -172,10 +186,10 @@ export async function startServer({ workspace, data, port = 0, token = crypto.ra
         port: actual,
         token,
         db,
-        runs,
+        chats,
         url: `http://127.0.0.1:${actual}/?token=${token}`,
         async close() {
-            runs.stopAll();
+            chats.stopAll();
             for (const res of subscribers) res.end();
             await new Promise((resolve) => server.close(resolve));
             db.close();
