@@ -181,7 +181,8 @@ textarea, input { font: inherit; color: inherit; }
 .preview-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px 10px 14px; border-bottom: 1px solid var(--line-soft); }
 .preview-title { font-size: 13.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preview-actions { display: flex; gap: 2px; flex: none; }
-.preview-actions button { width: 30px; height: 30px; border-radius: 8px; color: var(--ink-3); font-size: 14px; display: grid; place-items: center; font-family: var(--mono); }
+.preview-actions button { width: 30px; height: 30px; border-radius: 8px; color: var(--ink-3); display: grid; place-items: center; }
+.preview-actions svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .preview-actions button:hover, .preview-actions button.is-on { color: var(--ink); background: var(--line-soft); }
 .preview-actions button.is-close:hover { color: var(--danger); background: var(--danger-soft); }
 .preview-frame { flex: 1; min-height: 0; width: 100%; border: none; background: #fff; }
