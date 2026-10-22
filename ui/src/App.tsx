@@ -65,6 +65,7 @@ export function App() {
 
     const rows = useMemo(() => (snapshot ? buildRows(snapshot.messages, snapshot.compactions, state.notes, snapshot.partial) : []), [snapshot, state.notes]);
     const selected = useMemo(() => snapshot?.nodes.find((node) => node.id === selectedId) ?? null, [snapshot, selectedId]);
+    const openSetup = useCallback(() => setSetupOpen(true), []);
     const maxChat = useCallback(() => Math.max(CHAT.min, Math.min(CHAT.max, window.innerWidth - 420)), []);
 
     const ready = Boolean(config?.ready);
@@ -77,7 +78,7 @@ export function App() {
                         onLoadOlder={() => loadOlder().catch((error) => showToast(error.message))} onClearSelection={() => setSelectedId(null)} />
                     <PaneDivider value={chatWidth} defaultValue={CHAT.default} min={CHAT.min} max={maxChat} direction={1} onChange={setChatWidth} />
                     <Canvas nodes={snapshot.nodes} title={snapshot.project.title} prompt={snapshot.project.prompt} selectedId={selectedId} setSelectedId={setSelectedId}
-                        ready={ready} onBranch={onBranch} onSetup={() => setSetupOpen(true)} onToast={showToast} />
+                        ready={ready} onBranch={onBranch} onSetup={openSetup} onToast={showToast} />
                 </main>
                 : projectId
                     ? <div className="loading">打开画布…</div>

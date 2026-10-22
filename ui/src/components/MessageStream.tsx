@@ -1,5 +1,5 @@
 // 消息流:用户气泡、agent 的 Markdown 回复、工具调用组、压缩标记、本地提示。贴着底部跟随,往上翻时不打扰,滚到顶加载更早。
-import { useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import type { ChatRow, ToolRow } from '../lib/chat';
 import { renderMarkdown } from '../lib/markdown';
 import { Mark } from './Mark';
@@ -77,14 +77,7 @@ export function MessageStream({ rows, busy, hasMore, onLoadOlder, scrollSeq }: {
                             </div>
                         );
                     }
-                    if (row.kind === 'assistant') {
-                        return (
-                            <div className={`assistant-message${row.streaming ? ' is-streaming' : ''}`} key={row.key}>
-                                <span className="assistant-avatar"><Mark size={16} /></span>
-                                <div className="assistant-content chat-markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(row.content) }} />
-                            </div>
-                        );
-                    }
+                    if (row.kind === 'assistant') return <Assistant key={row.key} content={row.content} streaming={row.streaming} />;
                     if (row.kind === 'compaction') return <span className="chat-divider" key={row.key} title={row.summary}>之前的对话已压缩成摘要</span>;
                     return <span className={`chat-note is-${row.note}`} key={row.key}>{row.content}</span>;
                 })}
@@ -95,3 +88,14 @@ export function MessageStream({ rows, busy, hasMore, onLoadOlder, scrollSeq }: {
         </div>
     );
 }
+
+// 每条回复的 Markdown 只在它自己的内容变了才重新渲染(流式时只有最后一条在变)
+const Assistant = memo(function Assistant({ content, streaming }: { content: string; streaming: boolean }) {
+    const html = useMemo(() => renderMarkdown(content), [content]);
+    return (
+        <div className={`assistant-message${streaming ? ' is-streaming' : ''}`}>
+            <span className="assistant-avatar"><Mark size={16} /></span>
+            <div className="assistant-content chat-markdown" dangerouslySetInnerHTML={{ __html: html }} />
+        </div>
+    );
+});

@@ -1,5 +1,5 @@
 // 画布:整棵树、节点卡片、发散气泡、右侧预览。
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import type { Id, TreeNode } from '../types';
 import { isArtifact } from '../types';
 import { edgePath, layoutTree } from '../lib/layout';
@@ -19,7 +19,8 @@ function intersects(p: { x: number; y: number; w: number; h: number }, rect: { x
     return p.x + p.w / 2 >= rect.x1 && p.x - p.w / 2 <= rect.x2 && p.y + p.h / 2 >= rect.y1 && p.y - p.h / 2 <= rect.y2;
 }
 
-export function Canvas({ nodes, title, prompt, selectedId, setSelectedId, ready, onBranch, onSetup, onToast }: {
+// memo:对话每来一个增量 App 都会重渲染,树和缩略图不该跟着动
+export const Canvas = memo(function Canvas({ nodes, title, prompt, selectedId, setSelectedId, ready, onBranch, onSetup, onToast }: {
     nodes: TreeNode[]; title: string; prompt: string;
     selectedId: Id | null; setSelectedId: (id: Id | null) => void;
     ready: boolean;
@@ -175,4 +176,4 @@ export function Canvas({ nodes, title, prompt, selectedId, setSelectedId, ready,
             </div>
         </div>
     );
-}
+});

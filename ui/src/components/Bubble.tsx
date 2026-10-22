@@ -16,9 +16,9 @@ export function Bubble({ node, pos, onSubmit, onClose }: {
     }, [node.id]);
     const isRoot = node.parent_id === null;
     const submit = () => { if (text.trim()) onSubmit(text.trim(), count); };
-    const arrowTop = 44;
+    const arrowTop = 14;   // 箭头对准右上角的发散图标
     return (
-        <div className="bubble" style={{ left: pos.x + pos.w / 2 + 27, top: pos.y - pos.h / 2 + 1 - arrowTop, ['--arrow-top' as string]: `${arrowTop}px` }}
+        <div className="bubble" style={{ left: pos.x + pos.w / 2 + 24, top: pos.y - pos.h / 2 - 12 - arrowTop + 14, ['--arrow-top' as string]: `${arrowTop}px` }}
             onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
             <div className="bubble-head">{isRoot ? '从需求再长几版' : <>从 <b>「{node.title}」</b> 继续</>}</div>
             <textarea ref={ref} value={text} onChange={(e) => setText(e.target.value)}
